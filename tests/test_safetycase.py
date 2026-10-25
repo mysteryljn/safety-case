@@ -22,4 +22,24 @@ class SafetyCaseTests(unittest.TestCase):
         report=validate({})
         self.assertFalse(report["ok"])
         self.assertIn("safety case has no claims", report["issues"])
+    def test_malformed_graph_shape_is_reported_instead_of_crashing(self):
+        # A malformed producer can emit an object instead of the claims list.
+        # The validator must return a useful report so CI can continue and
+        # show the input error rather than raising TypeError.
+        report=validate({"claims":{},"evidence":[]})
+        self.assertFalse(report["ok"])
+        self.assertIn("claims must be a list", report["issues"])
+    def test_disconnected_claim_is_rejected(self):
+        # The second top-level claim is a separate argument graph.  Without
+        # this check it could pass validation while never supporting the
+        # safety claim represented by the first node.
+        report=validate({
+            "claims":[
+                {"id":"C-ROOT","supports":["E-ROOT"]},
+                {"id":"C-ORPHAN","supports":["E-ORPHAN"]},
+            ],
+            "evidence":[{"id":"E-ROOT"},{"id":"E-ORPHAN"}],
+        })
+        self.assertFalse(report["ok"])
+        self.assertIn("orphan claim C-ORPHAN", report["issues"])
 if __name__=="__main__": unittest.main()
