@@ -1,0 +1,1 @@
+{"claims":[{"id":"C-ROOT","text":"diagnostic update is acceptably safe","supports":["C-VERIFY","E-TEST"]},{"id":"C-VERIFY","text":"signature is verified","supports":["E-SIGN"]}],"evidence":[{"id":"E-TEST","kind":"test","file":"tests/update.json"},{"id":"E-SIGN","kind":"review","file":"reviews/signature.md"}]}
