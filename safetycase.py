@@ -94,14 +94,31 @@ def validate(case):
     root_claims=[cid for cid in claims if cid not in referenced_claims]
     for orphan in root_claims[1:]:
         errors.append("orphan claim "+str(orphan))
+    # Walk the claim graph iteratively.  A generated safety case can contain
+    # a perfectly valid argument chain deeper than Python's recursion limit;
+    # recursive DFS would then abort validation with ``RecursionError`` before
+    # returning the report.  The explicit enter/exit markers preserve the
+    # recursion-stack check used for cycle detection without depending on the
+    # input depth.
     visiting=set(); visited=set()
-    def dfs(node):
-        if node in visiting: errors.append("cycle detected at %s"%node); return
-        if node in visited: return
-        visiting.add(node)
-        for child in graph.get(node,[]): dfs(child)
-        visiting.remove(node); visited.add(node)
-    for cid in graph: dfs(cid)
+    for start in graph:
+        if start in visited: continue
+        stack=[(start,False)]
+        while stack:
+            node, exiting=stack.pop()
+            if exiting:
+                visiting.discard(node)
+                visited.add(node)
+                continue
+            if node in visiting:
+                errors.append("cycle detected at %s"%node)
+                continue
+            if node in visited:
+                continue
+            visiting.add(node)
+            stack.append((node,True))
+            for child in reversed(graph.get(node,[])):
+                stack.append((child,False))
     return {"claims":len(claims),"evidence":len(evidence),"issues":errors,"ok":not errors}
 def main(argv=None):
     p=argparse.ArgumentParser(description="Check a small safety argument graph"); p.add_argument("case",type=Path); a=p.parse_args(argv)
@@ -111,5 +128,10 @@ def main(argv=None):
     # parse error; keep malformed files on the normal CLI error path instead
     # of leaking a traceback to CI users.
     except (OSError, UnicodeError, json.JSONDecodeError) as e: print("error: "+str(e)); return 2
-    print(json.dumps(report,indent=2,ensure_ascii=False)); return 0 if report["ok"] else 1
+    # IDs and diagnostics originate in the case file.  Escaped lone
+    # surrogates are accepted by ``json.loads`` but cannot be encoded by a
+    # UTF-8 terminal when ``ensure_ascii=False`` is used, which would crash
+    # the checker while trying to print an otherwise useful report.  ASCII
+    # escaping keeps the JSON report serializable for every Unicode input.
+    print(json.dumps(report,indent=2,ensure_ascii=True)); return 0 if report["ok"] else 1
 if __name__=="__main__": raise SystemExit(main())

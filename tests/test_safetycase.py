@@ -1,5 +1,8 @@
+import io
+import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from safetycase import validate
 from safetycase import main
@@ -67,5 +70,51 @@ class SafetyCaseTests(unittest.TestCase):
             path = Path(directory) / "invalid.json"
             path.write_bytes(b"{\xff")
             self.assertEqual(main([str(path)]), 2)
+
+    def test_deep_claim_chain_does_not_hit_python_recursion_limit(self):
+        # Generated argument graphs can be deeper than Python's default
+        # recursion limit.  Validation must still complete and accept a
+        # well-formed chain instead of leaking RecursionError.
+        depth = 1500
+        claims = [
+            {"id": "C-%d" % index, "supports": ["C-%d" % (index + 1)]}
+            for index in range(depth - 1)
+        ]
+        claims.append({"id": "C-%d" % (depth - 1), "supports": ["E"]})
+        report = validate({"claims": claims, "evidence": [{"id": "E"}]})
+        self.assertTrue(report["ok"], report["issues"])
+        self.assertEqual(report["claims"], depth)
+
+    def test_cli_escapes_lone_surrogate_in_report(self):
+        # JSON permits escaped surrogate code units, but a raw surrogate
+        # cannot be written to a strict UTF-8 terminal.  The checker must
+        # still emit its diagnostic report instead of crashing during print.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "surrogate.json"
+            path.write_text(json.dumps({
+                "claims": [{"id": "C", "supports": ["E"]}],
+                "evidence": [{"id": "E"}, {"id": "\ud800"}],
+            }), encoding="utf-8")
+
+            class StrictUtf8Output:
+                encoding = "utf-8"
+
+                def __init__(self):
+                    self.data = io.BytesIO()
+
+                def write(self, value):
+                    encoded = value.encode("utf-8")
+                    self.data.write(encoded)
+                    return len(value)
+
+                def flush(self):
+                    return None
+
+            output = StrictUtf8Output()
+            with redirect_stdout(output):
+                result = main([str(path)])
+
+            self.assertEqual(result, 1)
+            self.assertIn(r"\ud800", output.data.getvalue().decode("utf-8"))
 
 if __name__=="__main__": unittest.main()
