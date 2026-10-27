@@ -41,11 +41,20 @@ def validate(case):
     # duplicate ID makes a reference ambiguous (and the dictionary
     # comprehensions above silently discard one of the nodes), so reject it
     # instead of validating whichever duplicate happens to come last.
-    node_ids=[node_id for node_id,_ in claim_nodes + evidence_nodes]
+    # Do not call ``node_ids.count`` for every item here.  That turns a
+    # perfectly valid large case into an O(n^2) scan and lets an accidentally
+    # generated (or untrusted) case consume excessive CPU before validation
+    # can report its result.  IDs have already been checked for hashability,
+    # so a set gives us a linear pass while preserving first-seen order in the
+    # diagnostic list.
+    seen_ids=set()
     duplicate_ids=[]
-    for node_id in node_ids:
-        if node_ids.count(node_id) > 1 and node_id not in duplicate_ids:
-            duplicate_ids.append(node_id)
+    for node_id,_ in claim_nodes + evidence_nodes:
+        if node_id in seen_ids:
+            if node_id not in duplicate_ids:
+                duplicate_ids.append(node_id)
+        else:
+            seen_ids.add(node_id)
     errors.extend("duplicate node id "+str(node_id) for node_id in duplicate_ids)
     # An empty graph cannot constitute a safety argument.  Previously an
     # empty JSON object (or one with no claims) returned ``ok=True`` because
@@ -97,6 +106,10 @@ def validate(case):
 def main(argv=None):
     p=argparse.ArgumentParser(description="Check a small safety argument graph"); p.add_argument("case",type=Path); a=p.parse_args(argv)
     try: report=validate(json.loads(a.case.read_text(encoding="utf-8")))
-    except (OSError,json.JSONDecodeError) as e: print("error: "+str(e)); return 2
+    # A case is read as UTF-8.  Invalid byte sequences raise
+    # ``UnicodeDecodeError`` before ``json.loads`` gets a chance to report a
+    # parse error; keep malformed files on the normal CLI error path instead
+    # of leaking a traceback to CI users.
+    except (OSError, UnicodeError, json.JSONDecodeError) as e: print("error: "+str(e)); return 2
     print(json.dumps(report,indent=2,ensure_ascii=False)); return 0 if report["ok"] else 1
 if __name__=="__main__": raise SystemExit(main())

@@ -1,5 +1,8 @@
+import tempfile
 import unittest
+from pathlib import Path
 from safetycase import validate
+from safetycase import main
 class SafetyCaseTests(unittest.TestCase):
     def test_valid_case(self):
         case={"claims":[{"id":"C","supports":["E"]}],"evidence":[{"id":"E"}]}
@@ -42,4 +45,27 @@ class SafetyCaseTests(unittest.TestCase):
         })
         self.assertFalse(report["ok"])
         self.assertIn("orphan claim C-ORPHAN", report["issues"])
+
+    def test_large_case_uses_linear_duplicate_id_scan(self):
+        # A large generated case should remain practical to validate.  The
+        # previous list.count-per-node implementation made this quadratic and
+        # could consume minutes of CPU for a malformed input.
+        case={
+            "claims":[{"id":"C-%d" % i,"supports":["E"]} for i in range(12000)],
+            "evidence":[{"id":"E"}],
+        }
+        report=validate(case)
+        self.assertFalse(report["ok"])
+        self.assertIn("orphan claim C-1", report["issues"])
+
+    def test_cli_reports_invalid_utf8_without_traceback(self):
+        # ``Path.read_text(encoding="utf-8")`` raises UnicodeDecodeError for
+        # a truncated or otherwise corrupted file.  The CLI should report the
+        # malformed input with its documented parse-error exit code instead of
+        # crashing before JSON validation starts.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "invalid.json"
+            path.write_bytes(b"{\xff")
+            self.assertEqual(main([str(path)]), 2)
+
 if __name__=="__main__": unittest.main()
